@@ -27,11 +27,5 @@
         }
       ]
     }
-  ],
-  "rewrites": [
-    {
-      "source": "/:referralCode([A-Za-z0-9]{8})/:referrerId([0-9a-fA-F-]{36})",
-      "destination": "/"
-    }
   ]
 }

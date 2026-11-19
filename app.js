@@ -135,21 +135,11 @@ let chatMessages=[], chatLoaded=false, chatLoading=false, chatSending=false, cha
 let chatCryptoDbPromise=null, chatCryptoRecord=null, chatE2EE=null, chatE2EEReady=false, chatE2EEInitPromise=null;
 let currentOrderId=sessionStorage.getItem('sora_active_order_id')||null, otpPollTimer=null, otpPollInFlight=false, currentOrderCreatedAt=Date.now();
 const DASHBOARD_PAGE_KEY='sora_dashboard_page_v1';
-const validDashboardPages=new Set(['home','buy','chat','topup','history','profile','edit-profile','referral','otp']);
+const validDashboardPages=new Set(['home','buy','chat','topup','history','profile','edit-profile','otp']);
 let showAllServices=false,catalogLoaded=false,bootstrapPromise=null,countryLoadGeneration=0;
 const countryCacheMemory=new Map();
 const COUNTRY_CACHE_TTL=10*60*1000;
 function getSavedDashboardPage(){try{const value=localStorage.getItem(DASHBOARD_PAGE_KEY);return validDashboardPages.has(value)?value:'home';}catch{return 'home';}}
-function captureReferralCodeFromPath(){
- try{
-  const parts=location.pathname.split('/').filter(Boolean);
-  const pathCode=parts.length===2&&/^[a-z0-9]{8}$/i.test(parts[0])&&/^[0-9a-f-]{36}$/i.test(parts[1])?parts[0]:'';
-  const queryCode=new URLSearchParams(location.search).get('ref')||'';
-  const code=(pathCode||queryCode).trim().toUpperCase();
-  if(/^[A-Z0-9]{8}$/.test(code))localStorage.setItem('sora_pending_referral_code',code);
- }catch{}
-}
-captureReferralCodeFromPath();
 
 async function api(path, opts={}) { const token=session?.access_token; const res=await fetch(`/api/${path}`,{...opts,headers:{...(opts.body?{'Content-Type':'application/json'}:{}),...(token?{Authorization:`Bearer ${token}`} : {}),...(opts.headers||{})}}); const data=await res.json().catch(()=>({})); if(!res.ok) throw Object.assign(new Error(data.error||`Request gagal (${res.status})`),{status:res.status,data}); return data; }
 function alertError(message){Swal.fire({icon:'error',title:'Terjadi kendala',text:message,confirmButtonText:'Mengerti'});}
@@ -166,7 +156,7 @@ function setPage(name){
  const idx=navPages.indexOf(navName);const indicator=$('.nav-indicator');
  if(indicator)indicator.style.transform=`translateX(${Math.max(0,idx)*100}%)`;
  if(name==='buy')loadCatalog();if(name==='history')loadHistory();if(name==='home')loadDashboard();
- if(name==='profile')renderProfile();if(name==='edit-profile')populateProfileEditor();if(name==='referral')loadReferral();if(name==='topup')refreshProfile();
+ if(name==='profile')renderProfile();if(name==='edit-profile')populateProfileEditor();if(name==='topup')refreshProfile();
  if(name==='chat'){chatUnread=0;updateChatUnreadBadge();if(chatE2EEReady)loadChatMessages({initial:!chatLoaded});else showChatCryptoStatus('Menyiapkan enkripsi…');}
  if(name==='otp')loadCurrentOrder();else if(currentOrderId&&session?.access_token)scheduleOtpPoll({next_check_after_seconds:15});
  const activePage=document.querySelector(`#page-${name}`);if(activePage)localize(activePage);window.scrollTo({top:0,behavior:'smooth'});
@@ -175,7 +165,6 @@ $$('[data-page]').forEach(b=>b.addEventListener('click',()=>setPage(b.dataset.pa
 $$('[data-go]').forEach(b=>b.addEventListener('click',()=>setPage(b.dataset.go)));
 $('#headerAvatar').addEventListener('click',()=>{const menu=$('#headerMenu');const opening=menu.classList.contains('hidden');menu.classList.toggle('hidden',!opening);$('#headerAvatar').setAttribute('aria-expanded',String(opening));});
 function closeHeaderMenu(){const menu=$('#headerMenu');menu?.classList.add('hidden');$('#headerAvatar')?.setAttribute('aria-expanded','false');}
-$('#headerReferral').addEventListener('click',()=>{closeHeaderMenu();setPage('referral');});
 $('#headerSettings').addEventListener('click',()=>{closeHeaderMenu();setPage('edit-profile');});
 document.addEventListener('click',e=>{if(!e.target.closest('.header-menu-wrap'))closeHeaderMenu();});
 async function init(){
@@ -240,7 +229,7 @@ $('#verifyOtp').addEventListener('click',async()=>{const token=readOtp();if(toke
 $('#resendOtp').addEventListener('click',async()=>{try{const {error}=await sb.auth.resend({type:'signup',email:pendingEmail});if(error)throw error;Swal.fire({icon:'success',title:'Kode dikirim ulang',text:'Periksa kotak masuk dan folder spam.'});}catch(e){alertError(e.message);}});
 async function bootstrap(){
  if(bootstrapPromise)return bootstrapPromise;
- bootstrapPromise=(async()=>{await applyPendingReferral();await loadDashboard();renderProfile();await startLeaderboardRealtime();await startPublicChatRealtime();})();
+ bootstrapPromise=(async()=>{await loadDashboard();renderProfile();await startLeaderboardRealtime();await startPublicChatRealtime();})();
  try{return await bootstrapPromise;}finally{bootstrapPromise=null;}
 }
 async function bootstrapAndRestorePage(){await bootstrap();if(session?.access_token){showApp();setPage(getSavedDashboardPage());}}
@@ -643,51 +632,6 @@ function renderProfile(){const name=profile?.display_name||session?.user?.user_m
  $('#headerAvatar').innerHTML=profile?.avatar_url?`<img src="${esc(resolveProfileAssetUrl(profile.avatar_url))}" alt="">`:esc(initial);
 
  updateWelcome();localize($('#page-profile'));}
-let referralLoadInFlight=null;
-async function applyPendingReferral(){
- if(!session?.access_token)return;
- let code='';try{code=localStorage.getItem('sora_pending_referral_code')||'';}catch{}
- if(!code)return;
- try{
-  await api('referral',{method:'POST',body:JSON.stringify({action:'claim',code})});
-  try{localStorage.removeItem('sora_pending_referral_code');}catch{}
- }catch(error){
-  console.warn('Referral invitation could not be applied:',error.message);
-  if(error.status===400||error.status===404){try{localStorage.removeItem('sora_pending_referral_code');}catch{}}
-  // Keep transient failures for a subsequent app bootstrap.
- }
-}
-async function loadReferral(){
- if(referralLoadInFlight)return referralLoadInFlight;
- $('#referralHistory').innerHTML='<div class="empty-state">Memuat riwayat referral...</div>';
- referralLoadInFlight=(async()=>{
-  const d=await api('referral');
-  const code=String(d.referral_code||profile?.referral_code||'');
-  $('#referralCodeValue').textContent=code||'Belum tersedia';
-  const link=code&&session?.user?.id?`https://gardaotp.my.id/${encodeURIComponent(code)}/${encodeURIComponent(session.user.id)}`:'';
-  $('#referralLinkValue').value=link||'Kode referral belum tersedia';
-  $('#referralTotalBonus').textContent=money(d.total_bonus||0);
-  $('#referralTotalFriends').textContent=Number(d.total_friends||0).toLocaleString('id-ID');
-  const history=Array.isArray(d.history)?d.history:[];
-  $('#referralHistory').innerHTML=history.length?history.map(item=>{
-   const friend=item.friend_name||item.friend_username||'Teman Garda OTP';
-   const when=item.created_at?new Intl.DateTimeFormat('id-ID',{dateStyle:'medium',timeStyle:'short'}).format(new Date(item.created_at)):'—';
-   return `<div class="referral-history-row"><div><b>${esc(friend)}</b><small>Top up ${money(item.topup_amount||0)} · ${esc(when)}</small></div><strong>+${money(item.bonus_amount||0)}</strong></div>`;
-  }).join(''):'<div class="empty-state">Belum ada bonus referral. Bagikan kode undangan kamu untuk mulai mengajak teman.</div>';
- })();
- try{await referralLoadInFlight;}catch(error){
-  $('#referralCodeValue').textContent='Belum tersedia';
-  $('#referralLinkValue').value='Link referral belum tersedia';
-  $('#referralHistory').innerHTML=`<div class="empty-state">${esc(error.message||'Referral gagal dimuat. Jalankan migrasi SQL referral terlebih dahulu.')}</div>`;
- }finally{referralLoadInFlight=null;}
-}
-async function copyReferralValue(value){
- if(!value||/belum tersedia/i.test(value))return alertError('Data referral belum tersedia.');
- try{await navigator.clipboard.writeText(value);Swal.fire({toast:true,position:'top',icon:'success',title:'Berhasil disalin',showConfirmButton:false,timer:1500});}
- catch{alertError('Tidak dapat menyalin otomatis. Salin teks secara manual.');}
-}
-$('#copyReferralCode').addEventListener('click',()=>copyReferralValue($('#referralCodeValue').textContent));
-$('#copyReferralLink').addEventListener('click',()=>copyReferralValue($('#referralLinkValue').value));
 let pendingAvatarFile=null,pendingBannerFile=null,avatarObjectUrl=null,bannerObjectUrl=null;
 function profileInitial(){const name=profile?.display_name||session?.user?.email?.split('@')[0]||'Sora';return name.trim().slice(0,1).toUpperCase()||'S';}
 function paintEditorPreview(){

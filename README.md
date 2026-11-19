@@ -4,13 +4,12 @@ Garda OTP adalah aplikasi mobile-first dengan landing page, autentikasi Supabase
 
 ## Struktur
 - `index.html`, `style.css`, `app.js`: frontend.
-- `api/`: Vercel serverless API, termasuk `create-payment.js` dan `sekalipay-webhook.js`.
+- `api/`: 11 Vercel serverless API routes, termasuk `create-payment.js` dan `sekalipay-webhook.js`.
 - `lib/server.js`: autentikasi, Supabase admin client, rate limit, HMAC, dan helper server.
 - `sql/schema.sql`: skema database untuk instalasi baru.
 - `sql/security-hardening-sekalipay.sql`: migration hardening untuk database yang sudah ada.
 - `sql/leaderboard-realtime.sql`: view leaderboard terbaru dan notifikasi Supabase Realtime Broadcast.
 - `sql/otp-guarantee.sql`: migration OTP, cancellation, popularity ranking, event ledger webhook, dan refund saldo 100% yang idempoten.
-- `sql/referral-system.sql`: kode undangan unik, pencatatan referral, serta bonus 5% dari setiap top up teman yang dikreditkan secara idempoten.
 - `.env.example`: daftar environment variable.
 
 ## Domain Garda OTP
@@ -118,8 +117,7 @@ Admin Dashboard endpoints, UI, roles, and database settings have been removed fr
 Jalankan migrasi `sql/profile-storage-migration.sql` untuk bucket dan policies penyimpanan foto profil. Upload profil memakai object path unik per pengguna.
 
 
-## Referral
 
-Jalankan `sql/referral-system.sql` paling akhir, setelah `sql/schema.sql` dan `sql/security-hardening-sekalipay.sql` (serta migrasi SekaliPay lain yang mengganti RPC settlement). Migrasi ini membuat kode referral unik, menyimpan relasi pengundang, menambah ledger bonus, dan memperbarui RPC `credit_sekalipay_topup_once` agar bonus 5% dikreditkan satu kali setelah top up teman terverifikasi. Jika migrasi ini dilewati, halaman referral akan menampilkan instruksi migrasi dan dashboard tetap dapat dibuka. Endpoint referral memakai satu Vercel Serverless Function (`api/referral.js`); total endpoint pada proyek ini adalah 12.
+## Pembersihan database lama
 
-Link referral menggunakan pola `https://gardaotp.my.id/KODE/UUID`. Rewrite di `vercel.json` mengarahkan link dua segmen tersebut ke SPA, dan frontend mengklaim kode setelah pengguna login/daftar.
+Jika database Supabase sebelumnya sudah pernah dipasangi migrasi program undangan, backup database lalu jalankan `sql/remove-referral-system.sql` satu kali melalui SQL Editor. Script ini menghapus tabel/kolom/trigger lama dan mengembalikan fungsi settlement top up ke versi tanpa bonus program undangan. Data riwayat program lama yang berada di tabel tersebut akan ikut dihapus; saldo yang sudah pernah dikreditkan sebelumnya tidak dikurangi otomatis.
